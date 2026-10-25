@@ -118,8 +118,8 @@ adb -s S shell cmd connectivity set-package-networking-enabled true com.miui.sys
 ## 12. 小米专属遥测与触控优化 miui-opt（要 adb）
 
 针对小米 / Redmi / POCO 手机（HyperOS / MIUI），脚本提供了 `miui-opt` 命令，一键检测、关闭系统遥测与触控预加载优化：
-- **系统遥测**：安全中心报告（`upload_log_pref`）、崩溃错误上传（`upload_dropbox_data`）、Activity 启动打点记录（`activity_starts_logging_enabled`）。
-- **触控预加载（Touch Prestart）**：针对预加载白名单应用自动关闭（`touch_prestart_opt_config` 置空），降低滑动列表或误触时在后台强行拉起其他应用的功耗与发热。
+- **系统遥测**：安全中心报告（`send_security_reports`）、崩溃错误上传（`send_action_app_error`）、Activity 启动打点记录（`activity_starts_logging_enabled`）。
+- **触控预加载（Touch Prestart）**：针对预加载白名单应用自动关闭（`touch_prestart_opt_config` 写入 `{featureDisable:true}`），降低滑动列表或误触时在后台强行拉起其他应用的功耗与发热。
 
 ### 命令用法
 
