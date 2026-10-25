@@ -674,7 +674,7 @@ def main():
                 print(f"提示：检测到监控组件未挂起，可通过以下命令挂起：\n  python3 tool/run.py -s {s} suspend {pkgs_str}")
             print(f"如需恢复原值：python3 tool/run.py -s {s} miui-opt on")
         elif sub == "on":
-            miui_opt_apply(s, turn_off=False)
+            miui_opt_restore(s)
             print("小米专属优化设置已恢复原值，回读校验成功。")
         else:
             sys.exit("miui-opt 后面跟 check / off / on")
