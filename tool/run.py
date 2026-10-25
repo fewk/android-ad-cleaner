@@ -245,6 +245,103 @@ def set_quickapp_service(serial, restore=False):
     return f"快应用服务{'已恢复原值 ' + target if restore else '已关闭'}"
 
 
+MIUI_OPT_SETTINGS = [
+    ("system", "send_security_reports", "0", "安全中心安全报告上传"),
+    ("secure", "send_action_app_error", "0", "崩溃与错误报告上传"),
+    ("global", "activity_starts_logging_enabled", "0", "Activity 启动打点日志"),
+    ("system", "touch_prestart_opt_config", '"{featureDisable:true}"', "触控预加载优化"),
+]
+
+MIUI_OPT_PACKAGES = [
+    ("com.miui.analytics", "分析与统计服务"),
+    ("com.miui.daemon", "性能监控守护进程"),
+]
+
+
+def is_xiaomi_family(brand):
+    return FAMILY.get((brand or "").lower()) == "xiaomi"
+
+
+def miui_opt_status(serial):
+    settings_out = {}
+    for ns, key, target, desc in MIUI_OPT_SETTINGS:
+        val = sh(serial, f"settings get {ns} {key}")
+        if key == "touch_prestart_opt_config":
+            closed = "featureDisable:true" in (val or "").replace(" ", "").replace('"', "")
+        else:
+            closed = (val or "").strip() == target.strip('"\'')
+        settings_out[key] = {
+            "ns": ns, "value": val, "target": target.strip('"\''),
+            "closed": closed, "desc": desc
+        }
+    pkgs_out = {}
+    for pkg, desc in MIUI_OPT_PACKAGES:
+        inst = installed(serial, pkg)
+        susp = suspended(serial, pkg) if inst else False
+        pkgs_out[pkg] = {
+            "installed": inst, "suspended": susp, "desc": desc,
+            "status": "已挂起" if susp else ("未挂起" if inst else "未安装")
+        }
+    return {"settings": settings_out, "packages": pkgs_out}
+
+
+def miui_opt_backup_path(serial):
+    for path in sorted(glob.glob(os.path.join(BACKUPS, "*", "miui-opt-before.json")), reverse=True):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("serial") == serial and "settings" in data:
+                return path, data
+        except Exception:
+            pass
+    return None, None
+
+
+def miui_opt_apply(serial, turn_off=True):
+    bpath, bdata = miui_opt_backup_path(serial)
+    if turn_off:
+        if bdata is None:
+            # 记录当前原值
+            curr = {}
+            for ns, key, _, _ in MIUI_OPT_SETTINGS:
+                curr[f"{ns}/{key}"] = sh(serial, f"settings get {ns} {key}")
+            bpath = os.path.join(latest_backup(serial, create=True), "miui-opt-before.json")
+            with open(bpath, "w", encoding="utf-8") as f:
+                json.dump({"serial": serial, "saved_at": datetime.datetime.now().isoformat(), "settings": curr}, f, indent=2)
+        # 执行关闭
+        for ns, key, target, _ in MIUI_OPT_SETTINGS:
+            sh(serial, f"settings put {ns} {key} {target}")
+            val = sh(serial, f"settings get {ns} {key}")
+            if key == "touch_prestart_opt_config":
+                ok = "featureDisable:true" in (val or "").replace(" ", "").replace('"', "")
+            else:
+                ok = (val or "").strip() == target.strip('"\'')
+            if not ok:
+                raise RuntimeError(f"设置 {ns} {key} 写入校验失败（期望 {target}，实际 {val}）")
+        return {"ok": True, "action": "off", "backup": bpath}
+    else:
+        if bdata is None:
+            raise RuntimeError("未找到本设备的 miui-opt 原值备份，未执行还原；请手动核对")
+        settings_saved = bdata.get("settings", {})
+        for ns, key, _, _ in MIUI_OPT_SETTINGS:
+            full_k = f"{ns}/{key}"
+            orig = settings_saved.get(full_k)
+            if orig is None or str(orig).strip() in ("", "null"):
+                sh(serial, f"settings delete {ns} {key}")
+            else:
+                sh(serial, f"settings put {ns} {key} {orig}")
+        if bpath and os.path.exists(bpath):
+            try:
+                os.remove(bpath)
+            except OSError:
+                pass
+        return {"ok": True, "action": "on"}
+
+
+def miui_opt_restore(serial):
+    return miui_opt_apply(serial, turn_off=False)
+
+
 def quickapps(serial):
     """装着的快应用组件，带状态。"""
     ev = sh(serial, "dumpsys usagestats")
