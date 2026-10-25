@@ -115,6 +115,49 @@ adb -s S shell pm unsuspend --user 0 com.miui.systemAdSolution
 adb -s S shell cmd connectivity set-package-networking-enabled true com.miui.systemAdSolution
 ```
 
+## 12. 小米专属遥测与触控优化 miui-opt（要 adb）
+
+针对小米 / Redmi / POCO 手机（HyperOS / MIUI），脚本提供了 `miui-opt` 命令，一键检测、关闭系统遥测与触控预加载优化：
+- **系统遥测**：安全中心报告（`upload_log_pref`）、崩溃错误上传（`upload_dropbox_data`）、Activity 启动打点记录（`activity_starts_logging_enabled`）。
+- **触控预加载（Touch Prestart）**：针对预加载白名单应用自动关闭（`touch_prestart_opt_config` 置空），降低滑动列表或误触时在后台强行拉起其他应用的功耗与发热。
+
+### 命令用法
+
+- **只读检测**：
+  ```bash
+  python3 tool/run.py -s S miui-opt
+  ```
+  查看当前各项设置的状态与监控组件安装/挂起情况，不修改任何配置。
+
+- **一键优化**：
+  ```bash
+  python3 tool/run.py -s S miui-opt off
+  ```
+  在修改前自动备份所有配置原值至 `backups/<机型>-<时间>/miui-opt-before.json`（重复执行不会覆盖最初原值备份），修改后逐项进行严格回读校验。
+
+- **一键还原**：
+  ```bash
+  python3 tool/run.py -s S miui-opt on
+  ```
+  读取之前的备份文件，将各项配置精准还原回修改前的原始状态，并验证回读。
+
+### 配合监控包挂起
+
+小米系统内置的监控分析与性能采集组件（`com.miui.analytics` 小米移动分析、`com.miui.daemon` 系统守护进程）可以在征得机主同意后通过挂起命令安全冻结：
+
+```bash
+python3 tool/run.py -s S suspend com.miui.analytics com.miui.daemon
+```
+
+还原挂起：
+
+```bash
+python3 tool/run.py -s S unsuspend com.miui.analytics com.miui.daemon
+```
+
+> [!NOTE]
+> 绝不执行 `pm uninstall` 卸载系统包，通过 `pm suspend` 挂起可随时完整恢复，不影响 OTA 系统更新与系统稳定性。
+
 ---
 
 ## 小米的坑
