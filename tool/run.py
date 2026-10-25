@@ -14,6 +14,9 @@
   python3 tool/run.py -s 序列号 quickapp          只读：检测快应用组件（装没装、挂没挂、在不在跑、用没用过）
   python3 tool/run.py -s 序列号 quickapp off      关闭快应用：挂起全部快应用组件（先征得机主同意）
   python3 tool/run.py -s 序列号 quickapp on       恢复快应用
+  python3 tool/run.py -s 序列号 miui-opt            只读：检查小米遥测、触控预加载与监控组件状态
+  python3 tool/run.py -s 序列号 miui-opt off        一键优化：关闭遥测与触控预加载（自动备份原值）
+  python3 tool/run.py -s 序列号 miui-opt on         一键还原：按备份恢复原值
   python3 tool/run.py -s 序列号 finish             收尾：插电常亮改回备份时的值，提醒关闭开发者模式
   python3 tool/run.py -s 序列号 dev-off --yes      从电脑上关闭开发者模式和 USB 调试（执行后电脑与手机断开）
   python3 tool/run.py -s 序列号 status-json        只读：一次输出全部状态（JSON，给图形界面用）
@@ -328,8 +331,19 @@ def miui_opt_apply(serial, turn_off=True):
             orig = settings_saved.get(full_k)
             if orig is None or str(orig).strip() in ("", "null"):
                 sh(serial, f"settings delete {ns} {key}")
+                val = sh(serial, f"settings get {ns} {key}")
+                ok = (val or "").strip() in ("", "null")
             else:
                 sh(serial, f"settings put {ns} {key} {orig}")
+                val = sh(serial, f"settings get {ns} {key}")
+                if key == "touch_prestart_opt_config":
+                    norm_orig = str(orig).replace(" ", "").replace('"', "").replace("'", "")
+                    norm_val = (val or "").replace(" ", "").replace('"', "").replace("'", "")
+                    ok = (norm_val == norm_orig)
+                else:
+                    ok = (val or "").strip() == str(orig).strip('"\'')
+            if not ok:
+                raise RuntimeError(f"设置 {ns} {key} 还原校验失败（期望 {orig}，实际 {val}）")
         if bpath and os.path.exists(bpath):
             try:
                 os.remove(bpath)
@@ -449,6 +463,18 @@ def main():
         for q in quickapps(s):
             print(f"  快应用 {q['pkg']}（{q['name']}）：{'已关闭' if q['closed'] else '未关闭'}"
                   f"（{'系统服务开关' if q['method'] == 'setting' else '挂起状态'}）")
+        if is_xiaomi_family(i["brand"]):
+            print("小米专属优化（遥测与触控省电）：")
+            m_stat = miui_opt_status(s)
+            for _, key, _, _ in MIUI_OPT_SETTINGS:
+                item = m_stat["settings"][key]
+                st = "已关闭" if item["closed"] else "未关闭"
+                val_str = f" ({item['value']})" if item.get("value") and key != "touch_prestart_opt_config" else ""
+                print(f"  - {item['desc']} ({key})：{st}{val_str}")
+            for pkg, _ in MIUI_OPT_PACKAGES:
+                p_item = m_stat["packages"][pkg]
+                print(f"  - {p_item['desc']} ({pkg})：{p_item['status']}")
+            print(f"提示：一键优化遥测与触控：python3 tool/run.py -s {s} miui-opt off（可随时用 miui-opt on 还原）")
         print(f"插电常亮：{sh(s, 'settings get global stay_on_while_plugged_in')}")
 
     elif cmd == "backup":
@@ -614,6 +640,45 @@ def main():
         else:
             sys.exit("quickapp 后面跟 check / off / on")
 
+    elif cmd == "miui-opt":
+        i = info(s)
+        if not is_xiaomi_family(i["brand"]):
+            sys.exit("miui-opt 仅适用于小米 / Redmi / POCO 设备，当前设备品牌为 %s" % i["brand"])
+        sub = rest[0] if rest else "check"
+        if sub == "check":
+            st = miui_opt_status(s)
+            print("小米专属优化项与监控组件状态：")
+            all_closed = True
+            for _, key, _, _ in MIUI_OPT_SETTINGS:
+                item = st["settings"][key]
+                if not item["closed"]:
+                    all_closed = False
+                state_txt = "已关闭" if item["closed"] else "未关闭"
+                print(f"  {item['desc']} ({key}): {state_txt} (当前: {item['value'] or 'null'}, 目标: {item['target']})")
+            for pkg, _ in MIUI_OPT_PACKAGES:
+                p_item = st["packages"][pkg]
+                print(f"  {p_item['desc']} ({pkg}): {p_item['status']}")
+            if all_closed:
+                print(f"小米专属遥测与触控设置已优化完成。恢复：python3 tool/run.py -s {s} miui-opt on")
+            else:
+                print(f"一键优化：python3 tool/run.py -s {s} miui-opt off（自动备份原值，可还原）")
+        elif sub == "off":
+            res = miui_opt_apply(s, turn_off=True)
+            print("小米专属优化已生效，设置回读校验成功。")
+            if res.get("backup"):
+                print(f"原值已备份至：{display_backup_path(res['backup'])}")
+            st = miui_opt_status(s)
+            unfrozen = [pkg for pkg, _ in MIUI_OPT_PACKAGES if st["packages"][pkg]["installed"] and not st["packages"][pkg]["suspended"]]
+            if unfrozen:
+                pkgs_str = " ".join(unfrozen)
+                print(f"提示：检测到监控组件未挂起，可通过以下命令挂起：\n  python3 tool/run.py -s {s} suspend {pkgs_str}")
+            print(f"如需恢复原值：python3 tool/run.py -s {s} miui-opt on")
+        elif sub == "on":
+            miui_opt_apply(s, turn_off=False)
+            print("小米专属优化设置已恢复原值，回读校验成功。")
+        else:
+            sys.exit("miui-opt 后面跟 check / off / on")
+
     elif cmd == "finish":
         f = os.path.join(latest_backup(s), "stay_on.txt")
         v = open(f, encoding="utf-8").read().strip() if os.path.exists(f) else "0"
@@ -643,6 +708,7 @@ def main():
             "dev": sh(s, "settings get global development_settings_enabled") == "1",
             "backup": os.path.relpath(latest_backup(s), BACKUPS) if glob.glob(os.path.join(BACKUPS, f"{i['model']}-*")) else None,
             "fold_open": fold_open(s),
+            "miui_opt": miui_opt_status(s) if is_xiaomi_family(i["brand"]) else None,
         }, ensure_ascii=False))
 
     elif cmd == "dev-off":
